@@ -12,10 +12,10 @@ app = Flask(__name__)
 CORS(app, supports_credentials=True)
 
 # Configure MySQL
-app.config['MYSQL_HOST'] = 'localhost'
-app.config['MYSQL_USER'] = 'my_app_user'
-app.config['MYSQL_PASSWORD'] = '08023029886'
-app.config['MYSQL_DB'] = 'my_app'
+app.config['MYSQL_HOST'] = 'sql12.freemysqlhosting.net'
+app.config['MYSQL_USER'] = 'sql12716392'
+app.config['MYSQL_PASSWORD'] = 'WegGxmisMs'
+app.config['MYSQL_DB'] = 'sql12716392'
 
 mysql = MySQL(app)
 
@@ -250,6 +250,4 @@ def get_books():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
-
+    app.run()
