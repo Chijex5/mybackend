@@ -138,7 +138,7 @@ def create_notification(current_user):
     time = datetime.datetime.utcnow()
 
     cursor = mysql.connection.cursor()
-    cursor.execute(''' INSERT INTO notifications (id, sender, message, time, details) VALUES (%s, %s, %s, %s, %s)''', (current_user, sender, message, time, details))
+    cursor.execute(''' INSERT INTO notifications (user_id, sender, message, time, details) VALUES (%s, %s, %s, %s, %s)''', (current_user, sender, message, time, details))
     mysql.connection.commit()
     cursor.close()
 
@@ -148,7 +148,7 @@ def create_notification(current_user):
 @token_required
 def get_notifications(current_user):
     cursor = mysql.connection.cursor()
-    cursor.execute('SELECT * FROM notifications WHERE id = %s ORDER BY user_id DESC', (current_user,))
+    cursor.execute('SELECT * FROM notifications WHERE user_id = %s ORDER BY user_id DESC', (current_user,))
     notifications = cursor.fetchall()
     cursor.close()
 
@@ -244,10 +244,9 @@ def get_books():
     except mysql.connection.Error as err:
         print(f"Error: {err}")
         return jsonify({'error': str(err)}), 500
-    finally:
-        cursor.close()
+    
         
 
 
-if __name__ == "__main__":
-    app.run()
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
