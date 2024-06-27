@@ -241,7 +241,7 @@ def get_books():
         books = cursor.fetchall()
         
         return jsonify(books)
-    except mysql.connector.Error as err:
+    except mysql.connection.Error as err:
         print(f"Error: {err}")
         return jsonify({'error': str(err)}), 500
     finally:
