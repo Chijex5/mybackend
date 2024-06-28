@@ -4,9 +4,10 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_mysqldb import MySQL
 import uuid
 import jwt
-import datetime
+from datetime import datetime
 from flask_cors import CORS
 from functools import wraps
+from threading import Timer
 
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
@@ -131,6 +132,7 @@ def get_user(current_user):
 @app.route('/create-notification', methods=['POST'])
 @token_required
 def create_notification(current_user):
+    
     data = request.get_json()
     sender = data['sender']
     message = data['message']
@@ -138,17 +140,42 @@ def create_notification(current_user):
     time = datetime.datetime.utcnow()
 
     cursor = mysql.connection.cursor()
-    cursor.execute(''' INSERT INTO notifications (user_id, sender, message, time, details) VALUES (%s, %s, %s, %s, %s)''', (current_user, sender, message, time, details))
+    cursor.execute('''INSERT INTO notifications (user_id, sender, message, time, details) VALUES (%s, %s, %s, %s, %s)''', (current_user, sender, message, time, details))
     mysql.connection.commit()
     cursor.close()
 
     return jsonify({'message': 'Notification created!'}), 201
 
+@app.route('/notifications/<int:notification_id>/read', methods=['PATCH'])
+@token_required
+def mark_as_read(current_user, notification_id):
+     
+    cursor = mysql.connection.cursor()
+    cursor.execute('''
+    UPDATE notifications
+    SET `read` = TRUE, read_at = %s
+    WHERE id = %s AND user_id = %s
+''', (datetime.utcnow(), notification_id, current_user))
+    mysql.connection.commit()
+    cursor.close()
+
+    # Schedule deletion
+    delete_time = 60  # 24 hours in seconds
+    Timer(delete_time, delete_notification, [notification_id, current_user]).start()
+
+    return jsonify({"message": "Notification marked as read and scheduled for deletion."}), 200
+
+def delete_notification(notification_id, user_id):
+    cursor = mysql.connection.cursor()
+    cursor.execute('''DELETE FROM notifications WHERE id = %s AND id = %s AND read = TRUE''', (notification_id, user_id))
+    mysql.connection.commit()
+    cursor.close()
+
 @app.route('/notifications', methods=['GET'])
 @token_required
 def get_notifications(current_user):
     cursor = mysql.connection.cursor()
-    cursor.execute('SELECT * FROM notifications WHERE user_id = %s ORDER BY user_id DESC', (current_user,))
+    cursor.execute('SELECT * FROM notifications WHERE id = %s ORDER BY user_id DESC', (current_user,))
     notifications = cursor.fetchall()
     cursor.close()
 
