@@ -1,10 +1,11 @@
 import os
-from flask import Flask, request, jsonify, make_response
+import jwt
+import uuid
+from flask import Flask, request, jsonify, url_for
+from flask_mail import Mail, Message
+from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_mysqldb import MySQL
-import uuid
-import jwt
-from datetime import datetime
 from flask_cors import CORS
 from functools import wraps
 from threading import Timer
@@ -12,15 +13,23 @@ from threading import Timer
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
 
-# Configure MySQL
+# Mail Configuration
+app.config['MAIL_SERVER'] = 'smtp.gmail.com'
+app.config['MAIL_PORT'] = 465
+app.config['MAIL_USERNAME'] = 'embroconnect2@gmail.com'
+app.config['MAIL_PASSWORD'] = 'hbbriqyjepmnwkud'
+app.config['MAIL_USE_SSL'] = True
+app.config['MAIL_USE_TLS'] = False
+mail = Mail(app)
+
+# MySQL Configuration
 app.config['MYSQL_HOST'] = 'sql12.freemysqlhosting.net'
 app.config['MYSQL_USER'] = 'sql12716392'
 app.config['MYSQL_PASSWORD'] = 'WegGxmisMs'
 app.config['MYSQL_DB'] = 'sql12716392'
-
 mysql = MySQL(app)
 
-# Secret key for JWT encoding
+# JWT Configuration
 app.config['SECRET_KEY'] = 'de844c12092211e93e328d53fd8a2d800345c15d34ffabec1042f8193d32687f'
 
 @app.route('/signup', methods=['POST'])
@@ -35,31 +44,28 @@ def signup():
     address = data['address']
     level = data['level']
 
-    # Check if email or matric_no already exists
     cursor = mysql.connection.cursor()
+
     cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
     existing_email = cursor.fetchone()
     if existing_email:
         cursor.close()
         return jsonify({'error': 'Email already exists'}), 409
 
-    # Check if matric_no already exists
     cursor.execute("SELECT * FROM users WHERE matric_no = %s", (matric_no,))
     existing_matric_no = cursor.fetchone()
     if existing_matric_no:
         cursor.close()
         return jsonify({'error': 'Matriculation number already exists'}), 410
 
-
-    # Insert new user into the database
     try:
-        cursor = mysql.connection.cursor()
         cursor.execute(''' INSERT INTO users (public_id, email, matric_no, password, fullname, phone, department, address, level) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)''', (str(uuid.uuid4()), email, matric_no, password, fullname, phone, department, address, level))
         mysql.connection.commit()
         cursor.close()
-        return jsonify(matric_no)
+        return jsonify({'message': 'User registered successfully'}), 201
     except Exception as e:
-        return jsonify({'error': 'Registration Failed'}), 404
+        cursor.close()
+        return jsonify({'error': 'Registration Failed', 'details': str(e)}), 500
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -70,14 +76,12 @@ def login():
     cursor = mysql.connection.cursor()
     result = cursor.execute(''' SELECT * FROM users WHERE email = %s OR matric_no = %s ''', (identifier, identifier))
     user = cursor.fetchone()
+    cursor.close()
 
     if not user or not check_password_hash(user[4], password):
         return jsonify({'message': 'Invalid username or password'}), 401
 
-    token = jwt.encode({'public_id': user[0], 'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=30)}, app.config['SECRET_KEY'], algorithm='HS256')
-
-    
-
+    token = jwt.encode({'public_id': user[0], 'exp': datetime.utcnow() + timedelta(minutes=30)}, app.config['SECRET_KEY'], algorithm='HS256')
     return jsonify({'token': token}), 200
 
 def token_required(f):
@@ -102,17 +106,70 @@ def token_required(f):
     
     return decorated
 
+@app.route('/forgot-password', methods=['POST'])
+def forgot_password():
+    data = request.get_json()
+    matric_no = data.get('matric_no')
 
+    def get_user_by_matric_no(matric_no):
+        cursor = mysql.connection.cursor()
+        cursor.execute('SELECT id, email, fullname FROM users WHERE matric_no = %s', (matric_no,))
+        user = cursor.fetchone()
+        cursor.close()
+        return user
+
+    user = get_user_by_matric_no(matric_no)
+    if not user:
+        return jsonify({'message': 'User not found!'}), 404
+
+    token = jwt.encode({'user_id': user[0], 'exp': datetime.utcnow() + timedelta(hours=1)}, app.config['SECRET_KEY'], algorithm="HS256")
+    reset_link = f'https://work-please.onrender.com/reset-password/{token}'
+    expires_at = datetime.utcnow() + timedelta(hours=1)
+
+    cursor = mysql.connection.cursor()
+    cursor.execute('INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (%s, %s, %s)', (user[0], token, expires_at))
+    mysql.connection.commit()
+    cursor.close()
+    print(reset_link)
+
+    msg = Message('Password Reset Request', sender=app.config['MAIL_USERNAME'], recipients=[user[1]])
+    msg.body = f'Hi {user[2]},\n\nPlease click on the link below to reset your password:\n{reset_link}\n\nIf you did not request this, please ignore this email.'
+    mail.send(msg)
+
+    return jsonify({'message': 'Password reset email sent!'}), 200
+
+
+@app.route('/reset-password/<token>', methods=['POST'])
+def reset_password(token):
+    try:
+        data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+        user_id = data['user_id']
+    except jwt.ExpiredSignatureError:
+        return jsonify({'message': 'Token has expired!'}), 403
+    except jwt.InvalidTokenError:
+        return jsonify({'message': 'Invalid token!'}), 403
+    
+    data = request.get_json()
+    new_password = data.get('password')
+    hashed_password = generate_password_hash(new_password, method='pbkdf2:sha256')
+
+    cursor = mysql.connection.cursor()
+    cursor.execute('UPDATE users SET password = %s WHERE id = %s', (hashed_password, user_id))
+    mysql.connection.commit()
+    cursor.execute('DELETE FROM password_reset_tokens WHERE token = %s', (token,))
+    mysql.connection.commit()
+    cursor.close()
+    
+    return jsonify({'message': 'Password has been reset!'}), 200
 
 @app.route('/get-user', methods=['GET'])
 @token_required
 def get_user(current_user):
     cursor = mysql.connection.cursor()
-    cursor.execute('SELECT public_id, email, fullname, phone, department, address, level, active, role FROM users LEFT JOIN staff ON users.id = staff.user_id WHERE users.id = %s', (current_user,))
+    cursor.execute('SELECT public_id, email, fullname, phone, department, address, level, active, role FROM users WHERE public_id = %s', (current_user,))
     user = cursor.fetchone()
     cursor.close()
     if not user:
-        print(current_user)
         return jsonify({'message': 'User not found!'}), 404
 
     user_data = {
@@ -132,12 +189,11 @@ def get_user(current_user):
 @app.route('/create-notification', methods=['POST'])
 @token_required
 def create_notification(current_user):
-    
     data = request.get_json()
     sender = data['sender']
     message = data['message']
     details = data['details']
-    time = datetime.datetime.utcnow()
+    time = datetime.utcnow()
 
     cursor = mysql.connection.cursor()
     cursor.execute('''INSERT INTO notifications (user_id, sender, message, time, details) VALUES (%s, %s, %s, %s, %s)''', (current_user, sender, message, time, details))
@@ -149,25 +205,19 @@ def create_notification(current_user):
 @app.route('/notifications/<int:notification_id>/read', methods=['PATCH'])
 @token_required
 def mark_as_read(current_user, notification_id):
-     
     cursor = mysql.connection.cursor()
-    cursor.execute('''
-    UPDATE notifications
-    SET `read` = TRUE, read_at = %s
-    WHERE id = %s AND user_id = %s
-''', (datetime.utcnow(), notification_id, current_user))
+    cursor.execute('UPDATE notifications SET `read` = TRUE, read_at = %s WHERE id = %s AND user_id = %s', (datetime.utcnow(), notification_id, current_user))
     mysql.connection.commit()
     cursor.close()
 
-    # Schedule deletion
-    delete_time = 60  # 24 hours in seconds
+    delete_time = 86400  # 24 hours in seconds
     Timer(delete_time, delete_notification, [notification_id, current_user]).start()
 
     return jsonify({"message": "Notification marked as read and scheduled for deletion."}), 200
 
 def delete_notification(notification_id, user_id):
     cursor = mysql.connection.cursor()
-    cursor.execute('''DELETE FROM notifications WHERE id = %s AND id = %s AND read = TRUE''', (notification_id, user_id))
+    cursor.execute('DELETE FROM notifications WHERE id = %s AND user_id = %s AND `read` = TRUE', (notification_id, user_id))
     mysql.connection.commit()
     cursor.close()
 
@@ -175,7 +225,7 @@ def delete_notification(notification_id, user_id):
 @token_required
 def get_notifications(current_user):
     cursor = mysql.connection.cursor()
-    cursor.execute('SELECT * FROM notifications WHERE id = %s ORDER BY user_id DESC', (current_user,))
+    cursor.execute('SELECT * FROM notifications WHERE user_id = %s ORDER BY id DESC', (current_user,))
     notifications = cursor.fetchall()
     cursor.close()
 
@@ -191,24 +241,23 @@ def get_notifications(current_user):
         })
 
     return jsonify(notifications_list), 200
+
 @app.route('/staff', methods=['POST'])
 @token_required
 def add_staff(current_user):
     data = request.json
-    
     role = data['role']
     gender = data['gender']
     availability = data['availability']
     
-    try:
-        cursor = mysql.connection.cursor()
+    cursor = mysql.connection.cursor()
 
+    try:
         for slot in availability:
             day = slot['day']
             from_time = slot['from']
             to_time = slot['to']
 
-            # Insert staff data using raw SQL for each availability slot
             insert_query = """
                 INSERT INTO staff (user_id, role, gender, day, from_time, to_time)
                 VALUES (%s, %s, %s, %s, %s, %s)
@@ -218,7 +267,7 @@ def add_staff(current_user):
         mysql.connection.commit()
         cursor.close()
 
-        return jsonify({'message': 'Staff added successfully'})
+        return jsonify({'message': 'Staff added successfully'}), 201
     
     except Exception as e:
         mysql.connection.rollback()
@@ -227,38 +276,31 @@ def add_staff(current_user):
 @app.route('/update-profile', methods=['PUT'])
 @token_required
 def update_profile(current_user):
-
     data = request.json
     fullname = data.get('fullname')
     phone = data.get('phone')
     department = data.get('department')
     address = data.get('address')
     level = data.get('level')
-    
-   
+
     cursor = mysql.connection.cursor()
 
     try:
         cursor.execute('''
             UPDATE users 
             SET fullname = %s, phone = %s, department = %s, address = %s, level = %s 
-            WHERE id = %s
+            WHERE public_id = %s
         ''', (fullname, phone, department, address, level, current_user))
 
         mysql.connection.commit()
-        print(level)
-        
-        return {'message': 'User updated successfully'}, 200
+        return jsonify({'message': 'User updated successfully'}), 200
 
     except Exception as e:
-        
-        print(f"Error updating user: {str(e)}")
-        return {'error': 'Failed to update user'}, 500
+        mysql.connection.rollback()
+        return jsonify({'error': 'Failed to update user', 'details': str(e)}), 500
 
     finally:
         cursor.close()
-
-
 
 @app.route('/findbooks', methods=['GET'])
 def get_books():
@@ -266,14 +308,23 @@ def get_books():
         cursor = mysql.connection.cursor()
         cursor.execute("SELECT * FROM books")
         books = cursor.fetchall()
+        cursor.close()
         
-        return jsonify(books)
-    except mysql.connection.Error as err:
-        print(f"Error: {err}")
-        return jsonify({'error': str(err)}), 500
-    
-        
+        books_list = []
+        for book in books:
+            books_list.append({
+                'id': book[0],
+                'title': book[1],
+                'author': book[2],
+                'publisher': book[3],
+                'year': book[4],
+                'genre': book[5]
+            })
 
+        return jsonify(books_list), 200
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
