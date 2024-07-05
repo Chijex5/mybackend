@@ -123,7 +123,7 @@ def forgot_password():
         return jsonify({'message': 'User not found!'}), 404
 
     token = jwt.encode({'user_id': user[0], 'exp': datetime.utcnow() + timedelta(hours=1)}, app.config['SECRET_KEY'], algorithm="HS256")
-    reset_link = f'https://work-please.onrender.com/reset-password/{token}'
+    reset_link = f'http://192.168.118.240:3000/reset-password/{token}'
     expires_at = datetime.utcnow() + timedelta(hours=1)
 
     cursor = mysql.connection.cursor()
@@ -133,7 +133,7 @@ def forgot_password():
     print(reset_link)
 
     msg = Message('Password Reset Request', sender=app.config['MAIL_USERNAME'], recipients=[user[1]])
-    msg.body = f'Hi {user[2]},\n\nPlease click on the link below to reset your password:\n{reset_link}\n\nIf you did not request this, please ignore this email.'
+    msg.body = f'Hi {user[2]},\n\nPlease click on the link below to reset your password:\n{reset_link}\n\nIf you did not request this, please ignore this email.\n This link expires in an hour'
     mail.send(msg)
 
     return jsonify({'message': 'Password reset email sent!'}), 200
@@ -166,7 +166,7 @@ def reset_password(token):
 @token_required
 def get_user(current_user):
     cursor = mysql.connection.cursor()
-    cursor.execute('SELECT public_id, email, fullname, phone, department, address, level, active, role FROM users WHERE public_id = %s', (current_user,))
+    cursor.execute('SELECT users.id, email, fullname, phone, department, address, level, active, role FROM users left join staff on users.id = staff.user_id WHERE users.id = %s', (current_user,))
     user = cursor.fetchone()
     cursor.close()
     if not user:
@@ -196,7 +196,7 @@ def create_notification(current_user):
     time = datetime.utcnow()
 
     cursor = mysql.connection.cursor()
-    cursor.execute('''INSERT INTO notifications (user_id, sender, message, time, details) VALUES (%s, %s, %s, %s, %s)''', (current_user, sender, message, time, details))
+    cursor.execute('''INSERT INTO notifications (id, sender, message, time, details) VALUES (%s, %s, %s, %s, %s)''', (current_user, sender, message, time, details))
     mysql.connection.commit()
     cursor.close()
 
@@ -205,27 +205,30 @@ def create_notification(current_user):
 @app.route('/notifications/<int:notification_id>/read', methods=['PATCH'])
 @token_required
 def mark_as_read(current_user, notification_id):
-    cursor = mysql.connection.cursor()
-    cursor.execute('UPDATE notifications SET `read` = TRUE, read_at = %s WHERE id = %s AND user_id = %s', (datetime.utcnow(), notification_id, current_user))
-    mysql.connection.commit()
-    cursor.close()
+    with app.app_context():
+        cursor = mysql.connection.cursor()
+        cursor.execute('UPDATE notifications SET `read` = TRUE, read_at = %s WHERE id = %s AND user_id = %s', (datetime.utcnow(), notification_id, current_user))
+        mysql.connection.commit()
+        cursor.close()
 
-    delete_time = 86400  # 24 hours in seconds
-    Timer(delete_time, delete_notification, [notification_id, current_user]).start()
+        delete_time = 60  # 24 hours in seconds
+        Timer(delete_time, delete_notification, args=[notification_id, current_user]).start()
 
     return jsonify({"message": "Notification marked as read and scheduled for deletion."}), 200
 
 def delete_notification(notification_id, user_id):
-    cursor = mysql.connection.cursor()
-    cursor.execute('DELETE FROM notifications WHERE id = %s AND user_id = %s AND `read` = TRUE', (notification_id, user_id))
-    mysql.connection.commit()
-    cursor.close()
+    with app.app_context():
+        cursor = mysql.connection.cursor()
+        cursor.execute('DELETE FROM notifications WHERE id = %s or id = %s AND `read` = TRUE', (notification_id, user_id))
+        mysql.connection.commit()
+        cursor.close()
+
 
 @app.route('/notifications', methods=['GET'])
 @token_required
 def get_notifications(current_user):
     cursor = mysql.connection.cursor()
-    cursor.execute('SELECT * FROM notifications WHERE user_id = %s ORDER BY id DESC', (current_user,))
+    cursor.execute('SELECT * FROM notifications WHERE id = %s ORDER BY id DESC', (current_user,))
     notifications = cursor.fetchall()
     cursor.close()
 
@@ -309,19 +312,21 @@ def get_books():
         cursor.execute("SELECT * FROM books")
         books = cursor.fetchall()
         cursor.close()
-        
-        books_list = []
-        for book in books:
-            books_list.append({
-                'id': book[0],
-                'title': book[1],
-                'author': book[2],
-                'publisher': book[3],
-                'year': book[4],
-                'genre': book[5]
-            })
 
-        return jsonify(books_list), 200
+        return jsonify(books), 200
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/top-10-selling-books', methods=['GET'])
+def top_10_selling_books():
+    try:
+        cursor = mysql.connection.cursor()
+        cursor.execute("SELECT * FROM books limit 10")
+        books = cursor.fetchall()
+        cursor.close()
+
+        return jsonify(books), 200
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
