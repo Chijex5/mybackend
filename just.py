@@ -27,6 +27,45 @@ def log_event(user_id, event, metadata=None):
     cursor.execute(query, (user_id, event, metadata))
     mysql.connection.commit()
     cursor.close()
+    
+@app.route('/purchase', methods=['POST'])
+def handle_purchase():
+    data = request.get_json()
+
+    user_id = data.get('userId')
+    book_id = data.get('bookId')
+    price = data.get('price')
+    payment_method = data.get('paymentMethod')
+    date_purchased = datetime.now()
+
+   try:
+        cursor = mysql.connection.cursor()
+        cursor.execute(
+            "INSERT INTO purchases (userId, bookId, price, paymentMethod, datePurchased) VALUES (%s, %s, %s, %s, %s)",
+            (user_id, book_id, price, payment_method, date_purchased)
+        )
+        mysql.connection.commit()
+        cursor.close()
+        return jsonify({"message": "Purchase recorded successfully!"}), 200
+    except Exception as e:
+        print(f"Error inserting user data: {e}")
+        return jsonify({'error': 'Failed to store purchase data'}), 500
+
+
+"""
+CREATE TABLE purchases (
+    purchaseId INT AUTO_INCREMENT PRIMARY KEY,   -- Unique ID for each purchase
+    userId VARCHAR(255) COLLATE utf8mb3_general_ci NOT NULL,  -- Matches userId column in users table
+    bookId INT NOT NULL,                         -- Matches the type of id in books table
+    price DECIMAL(10, 2) NOT NULL,               -- The price of the book
+    paymentMethod VARCHAR(50) NOT NULL,          -- Payment method (e.g., Credit Card, PayPal, etc.)
+    datePurchased DATETIME DEFAULT CURRENT_TIMESTAMP, -- Date and time of purchase
+    FOREIGN KEY (userId) REFERENCES users(userId),   -- Foreign key to users table
+    FOREIGN KEY (bookId) REFERENCES books(id)        -- Foreign key to books table
+);
+"""
+    
+
 
 @app.route('/complete-profile', methods=['POST'])
 def complete_profile():
