@@ -21,6 +21,13 @@ app.config['MYSQL_DB'] = 'my_app'
 mysql = MySQL(app)
 app.config['SECRET_KEY'] = 'de844c12092211e93e328d53fd8a2d800345c15d34ffabec1042f8193d32687f'
 
+def log_event(user_id, event, metadata=None):
+    cursor = mysql.connection.cursor()
+    query = "INSERT INTO analytics (user_id, event, metadata) VALUES (%s, %s, %s)"
+    cursor.execute(query, (user_id, event, metadata))
+    mysql.connection.commit()
+    cursor.close()
+
 @app.route('/complete-profile', methods=['POST'])
 def complete_profile():
     data = request.json
@@ -51,6 +58,7 @@ def complete_profile():
         """
         cursor.execute(insert_query, (user_id, email, username, profile_url, level, flat_no, street, city, state, postal_code, phone, department))
         mysql.connection.commit()
+        log_event(user_id, 'CompleteProfile', 'User completed profile')
 
         # Respond with success
         return jsonify({'message': 'Profile completed successfully'}), 201
@@ -88,9 +96,11 @@ def login():
                 'city': user[8] or "",
                 'state': user[9] or "",
                 'postal_code': user[10] or "",
-                'email': email
+                'email': email,
+                'userId': user_id
             }
             cursor.close()
+            log_event(user_id, 'login', 'User logged in successfully')
             return jsonify(response), 200
         else:
             # User not found, create a new user
@@ -110,6 +120,7 @@ def login():
                 'email': email
             }
             cursor.close()
+            log_event(user_id, 'login', 'New User created successfully')
             return jsonify(response), 201  # 201 Created
 
     except Exception as e:
@@ -146,6 +157,7 @@ def check_user():
             return jsonify({'exists': False, 'message': 'User not found.'}), 404
 
     except Exception as e:
+        log_event(user_id, 'error', str(e))
         return jsonify({'error': str(e)}), 500
 
 
@@ -183,11 +195,13 @@ def update_user():
 
         mysql.connection.commit()
         cursor.close()
+        log_event(user_id, 'Update', 'User Updated Profile')
 
         return jsonify({'message': 'User data updated successfully'}), 200
 
     except Exception as e:
         print(e)
+        log_event(user_id, 'error', str(e))
         return jsonify({'error': str(e)}), 500
 
 @app.route('/getbooks', methods=['GET'])
