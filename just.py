@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_mail import Mail
+from datetime import datetime
 from flask_mysqldb import MySQL
 from flask_cors import CORS
 
@@ -32,24 +33,48 @@ def log_event(user_id, event, metadata=None):
 def handle_purchase():
     data = request.get_json()
 
-    user_id = data.get('userId')
-    book_id = data.get('bookId')
-    price = data.get('price')
-    payment_method = data.get('paymentMethod')
-    date_purchased = datetime.now()
+    # Check if data is a list (multiple purchases)
+    if isinstance(data, list):
+        for item in data:
+            user_id = item.get('userId')
+            book_id = item.get('bookId')
+            price = item.get('price')
+            payment_method = item.get('paymentMethod')
+            date_purchased = datetime.now()
 
-   try:
-        cursor = mysql.connection.cursor()
-        cursor.execute(
-            "INSERT INTO purchases (userId, bookId, price, paymentMethod, datePurchased) VALUES (%s, %s, %s, %s, %s)",
-            (user_id, book_id, price, payment_method, date_purchased)
-        )
-        mysql.connection.commit()
-        cursor.close()
-        return jsonify({"message": "Purchase recorded successfully!"}), 200
-    except Exception as e:
-        print(f"Error inserting user data: {e}")
-        return jsonify({'error': 'Failed to store purchase data'}), 500
+            try:
+                cursor = mysql.connection.cursor()
+                cursor.execute(
+                    "INSERT INTO purchases (userId, bookId, price, paymentMethod, datePurchased) VALUES (%s, %s, %s, %s, %s)",
+                    (user_id, book_id, price, payment_method, date_purchased)
+                )
+                mysql.connection.commit()
+                cursor.close()
+            except Exception as e:
+                print(f"Error inserting purchase data: {e}")
+                return jsonify({'error': 'Failed to store purchase data'}), 500
+
+        return jsonify({"message": "All purchases recorded successfully!"}), 200
+    else:
+        # Handle a single purchase
+        user_id = data.get('userId')
+        book_id = data.get('bookId')
+        price = data.get('price')
+        payment_method = data.get('paymentMethod')
+        date_purchased = datetime.now()
+
+        try:
+            cursor = mysql.connection.cursor()
+            cursor.execute(
+                "INSERT INTO purchases (userId, bookId, price, paymentMethod, datePurchased) VALUES (%s, %s, %s, %s, %s)",
+                (user_id, book_id, price, payment_method, date_purchased)
+            )
+            mysql.connection.commit()
+            cursor.close()
+            return jsonify({"message": "Purchase recorded successfully!"}), 200
+        except Exception as e:
+            print(f"Error inserting purchase data: {e}")
+            return jsonify({'error': 'Failed to store purchase data'}), 500
 
 
 """
