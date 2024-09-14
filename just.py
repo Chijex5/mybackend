@@ -77,6 +77,31 @@ def handle_purchase():
             return jsonify({'error': 'Failed to store purchase data'}), 500
 
 
+@app.route('/user/purchases', methods=['GET'])
+def get_purchase_summary():
+    user_id = request.args.get('userId')  # Get the userId from query params
+
+    # SQL Query to sum the prices and count the number of books for the given user
+    query = """
+        SELECT SUM(price) as totalSum, COUNT(bookId) as totalBooks
+        FROM purchases 
+        WHERE userId = %s
+    """
+    cursor = mysql.connection.cursor()
+    cursor.execute(query, (user_id,))
+    result = cursor.fetchone()
+    cursor.close()
+
+    # If no purchases are found, return 0 for both fields
+    total_sum = result[0] if result[0] is not None else 0
+    total_books = result[1] if result[1] is not None else 0
+
+    # Return the result as JSON
+    return jsonify({
+        'totalSum': float(total_sum),
+        'totalBooks': total_books
+    })
+
 """
 CREATE TABLE purchases (
     purchaseId INT AUTO_INCREMENT PRIMARY KEY,   -- Unique ID for each purchase
